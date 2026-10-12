@@ -1,4 +1,4 @@
-# GIZMO tips and tricks
+# GIZMO visualization and post-processing tools
 
 A walkthrough of some handy tools for analysing GIZMO simulations, using a snapshot from the
 public STARFORGE data release:
@@ -232,10 +232,10 @@ and opacity, neglecting scattering. This is possible because there is a direct a
 doing a line-integral through a density field (as in the projection above), and solving the
 time-independent radiative transfer equation.
 
-For example, we can compute the H$\alpha$ emissivity of the ionized gas, and calculate the
-dust-extincted H$\alpha$ surface brightness of the HII region the stars have carved out. For
-case-B recombination the emissivity per unit volume is $n_e n_p
-\alpha^{\rm eff}_{{\rm H}\alpha}(T) E_{{\rm H}\alpha}$; `ElectronAbundance` and `HII` are both
+For example, we can compute the $\mathrm{H}\alpha$ emissivity of the ionized gas, and calculate the
+dust-extincted $\mathrm{H}\alpha$ surface brightness of the HII region the stars have carved out. For
+case-B recombination the emissivity per unit volume is
+$n_e n_p \alpha_{{\rm H}\alpha}^{\rm eff}(T) E_{{\rm H}\alpha}$; `ElectronAbundance` and `HII` are both
 stored as fractions per hydrogen nucleus. radtransfer wants an emissivity per unit mass, so we
 divide by density - and since it forms $j/\kappa$ internally, the two have to use the same mass
 unit.
@@ -459,138 +459,103 @@ Image("vizmo.png", width=600)
 
 ## Maps with SinkVis2
 
-[CrunchSnaps](https://github.com/mikegrudic/CrunchSnaps) renders maps and movies of GIZMO
-snapshots, and SinkVis2 is its front end. It isn't on PyPI, so install it from GitHub. `run` takes
-the same options as the `SinkVis2` command line and returns matplotlib figures. Sink particles are
-drawn as white dots.
+SinkVis2 is a command-line tool from [CrunchSnaps](https://github.com/mikegrudic/CrunchSnaps) for
+rendering maps and movies of GIZMO snapshots. It isn't on PyPI, so install it from GitHub.
 
 
 ```python
 %pip install -q "git+https://github.com/mikegrudic/CrunchSnaps.git"
 ```
 
-
-```python
-from CrunchSnaps.sinkvis2 import run
-
-# same region as our first projection; rendered maps are cached in outputfolder
-sinkvis_kwargs = dict(rmax=RMAX, res=RES, outputfolder="sinkvis2")
-fig = run(SNAPFILE, tasks="SigmaGas", **sinkvis_kwargs)
-```
-
-    ['snapshot_2590.hdf5']
-    0: opening  snapshot_2590.hdf5
-
-
-
-    
-![png](README_files/README_25_1.png)
-    
-
-
-Any field in the snapshot, or a numpy expression of fields, can be sliced or projected with
-`Slice(expr)`, `SurfaceDensity(expr)`, `Projection(expr)` or `ProjectedAverage(expr)`. Expressions
-are evaluated in code units - pc, $M_\odot$ and m/s for this run - with `UnitVelocity_In_CGS` and
-friends available for conversions, so `SurfaceDensity(Masses*InternalEnergy)` maps the thermal
-energy per unit area. `register_field_symbol` gives a field a colorbar label, and
-`register_derived_field` names an expression so it can be reused.
-
-
-```python
-from IPython.display import display
-from CrunchSnaps.snapshot_tasks import register_derived_field, register_field_symbol
-
-register_field_symbol(
-    "Masses*InternalEnergy", r"\Sigma_{E_{\rm th}}", lambda header: r"\mathrm{M_\odot\,m^2\,s^{-2}\,pc^{-2}}"
-)
-register_derived_field("v_z", "Velocities[:,2] * UnitVelocity_In_CGS / 1e5")
-register_field_symbol("v_z", "v_z", lambda header: r"\mathrm{km\,s^{-1}}")
-
-# with several tasks, run returns one list of figures per task and leaves displaying them to us
-figs = run(
-    SNAPFILE, tasks=["Slice(Temperature)", "SurfaceDensity(Masses*InternalEnergy)"], cmap="inferno", **sinkvis_kwargs
-)
-for (fig,) in figs:
-    display(fig)
-fig = run(SNAPFILE, tasks="Slice(v_z)", cmap="RdBu_r", limits=(-10, 10), **sinkvis_kwargs)
-```
-
-    ['snapshot_2590.hdf5']
-    0: opening  snapshot_2590.hdf5
-
-
-
-    
-![png](README_files/README_27_1.png)
-    
-
-
-
-    
-![png](README_files/README_27_2.png)
-    
-
-
-    ['snapshot_2590.hdf5']
-    0: opening  snapshot_2590.hdf5
-
-
-
-    
-![png](README_files/README_27_4.png)
-    
-
-
-CoolMap colors the surface density by the line-of-sight velocity dispersion, and HubbleSHO is a
-narrowband composite with [SII], H$\alpha$ and [OIII] emission as RGB. These need SinkVis2's PIL
-backend, which `run` doesn't support, so we use the command line, which writes PNGs to the output
-folder.
+Give it snapshots and the tasks to render, and it writes one PNG per task and snapshot to
+`--outputfolder`. The built-in tasks are `SigmaGas`, a surface density map; `CoolMap`, which colors
+the surface density by the line-of-sight velocity dispersion; and `HubbleSHO`, a narrowband
+composite with [SII], $\mathrm{H}\alpha$ and [OIII] emission as RGB. `SinkVis2 -h` lists all the options.
 
 
 ```python
 from glob import glob
 
-!SinkVis2 {SNAPFILE} CoolMap HubbleSHO --rmax={RMAX} --res={RES} --backend=PIL --outputfolder=sinkvis2
 
-fig, ax = plt.subplots(1, 2, figsize=(10, 5))
-for a, task in zip(ax, ("CoolMap", "NarrowbandComposite")):
-    a.imshow(plt.imread(glob(f"sinkvis2/{task}_*.png")[0]))
-    a.set_axis_off()
-plt.tight_layout()
-plt.show()
+def show_pngs(folder):
+    pngs = sorted(glob(f"{folder}/*.png"))
+    fig, ax = plt.subplots(1, len(pngs), figsize=(5 * len(pngs), 5))
+    for a, png in zip(ax, pngs):
+        a.imshow(plt.imread(png))
+        a.set_axis_off()
+    plt.tight_layout()
+    plt.show()
+
+
+!SinkVis2 {SNAPFILE} SigmaGas CoolMap HubbleSHO --rmax={RMAX} --outputfolder=sinkvis2/builtin
+show_pngs("sinkvis2/builtin")
 ```
 
     ['snapshot_2590.hdf5']
     0: opening  snapshot_2590.hdf5
     0: Data for time 0.00653892 available in buffer ...
-    Saving  sinkvis2/CoolMap_25900_0000_forward.png
-    Using SHO_RGB normalizations 1.78686e+54 4.40756e+54 3.56494e+54
-    Saving  sinkvis2/NarrowbandComposite_25900_0000_forward.png
+    Saving  sinkvis2/builtin/SurfaceDensity_25900_0000_forward.png
+    Saving  sinkvis2/builtin/CoolMap_25900_0000_forward.png
+    Using SHO_RGB normalizations 1.79562e+54 4.40079e+54 3.56657e+54
+    Saving  sinkvis2/builtin/NarrowbandComposite_25900_0000_forward.png
 
 
 
     
-![png](README_files/README_29_1.png)
+![png](README_files/README_26_1.png)
+    
+
+
+Any field in the snapshot, or a numpy expression of fields, can be sliced or projected with tasks
+like `Slice(expr)`, `SurfaceDensity(expr)`, `Projection(expr)` and `ProjectedAverage(expr)` - quote
+them so the shell leaves the brackets alone. Expressions are in code units (pc, $M_\odot$ and m/s
+for this run), with `UnitVelocity_In_CGS` and friends available for conversions. So
+`SurfaceDensity(Masses*InternalEnergy)` maps the thermal energy per unit area, and the last task
+slices the line-of-sight velocity in km/s.
+
+
+```python
+!SinkVis2 {SNAPFILE} 'Slice(Temperature)' 'SurfaceDensity(Masses*InternalEnergy)' --rmax={RMAX} --cmap=inferno --outputfolder=sinkvis2/custom
+!SinkVis2 {SNAPFILE} 'Slice(Velocities[:,2]*UnitVelocity_In_CGS/1e5)' --rmax={RMAX} --cmap=RdBu_r --limits=-10,10 --outputfolder=sinkvis2/custom
+show_pngs("sinkvis2/custom")
+```
+
+    ['snapshot_2590.hdf5']
+    0: opening  snapshot_2590.hdf5
+    0: Data for time 0.00653892 available in buffer ...
+    Saving  sinkvis2/custom/Slice_Temperature_25900_0000_forward.png
+    Saving  sinkvis2/custom/SurfaceDensity_Masses_InternalEnergy_25900_0000_forward.png
+    ['snapshot_2590.hdf5']
+    0: opening  snapshot_2590.hdf5
+    0: Data for time 0.00653892 available in buffer ...
+    Saving  sinkvis2/custom/Slice_Velocities___2__UnitVelocity_In_CGS_1e5_25900_0000_forward.png
+
+
+
+    
+![png](README_files/README_28_1.png)
     
 
 
 ## Gravity with pytreegrav
 
 [pytreegrav](https://github.com/mikegrudic/pytreegrav) computes gravitational potentials, fields
-and tidal tensors with an octree. We'll get all three at the gas cells, sourced by the gas and the
-sink particles. Softening lengths are kernel support radii, so the gas uses its smoothing lengths
+and tidal tensors with an octree, and its `Field` class gets all three in a single tree walk.
+We'll evaluate them at the gas cells, sourced by the gas and the sink particles. `Field` is newer
+than the latest PyPI release, so install from GitHub. Softening lengths are kernel support radii, so the gas uses its smoothing lengths
 and the sinks use the fixed softening GIZMO gave them. GIZMO also saved the potential it computed
 in the snapshot, which makes a good cross-check. The first call takes a few extra seconds while
 numba compiles the tree code.
 
 
 ```python
-%pip install -q pytreegrav
+# --force-reinstall because GitHub master has the same version number as the PyPI release
+%pip install -q --force-reinstall --no-deps "git+https://github.com/mikegrudic/pytreegrav.git"
 ```
 
 
 ```python
-from pytreegrav import Potential, Accel, TidalTensor
+from pytreegrav import Field
 
 pos_sink = (snap("Coordinates", ptype=5) * unit_length).to_value(u.pc)
 mass_sink = (snap("Masses", ptype=5) * unit_mass).to_value(u.Msun)
@@ -602,11 +567,12 @@ mass_all = np.concatenate([mass, mass_sink])
 hsml_all = np.concatenate([hsml, np.full(len(mass_sink), hsml_sink)])
 G = const.G.to_value(u.pc * (u.km / u.s) ** 2 / u.Msun)  # potentials in (km/s)^2
 
+fields = Field(pos_all, mass_all, hsml_all, G=G, parallel=True).evaluate(potential=True, accel=True, tidal=True)
 # evaluated at every particle, so keep the gas cells, which come first
 N_gas = len(mass)
-phi = Potential(pos_all, mass_all, hsml_all, G=G, parallel=True)[:N_gas]
-g = Accel(pos_all, mass_all, hsml_all, G=G, parallel=True)[:N_gas]  # -grad(phi)
-tidal = TidalTensor(pos_all, mass_all, hsml_all, G=G, parallel=True)[:N_gas]  # d(g_i)/d(x_j)
+phi = fields["potential"][:N_gas]
+g = fields["accel"][:N_gas]  # -grad(phi)
+tidal = fields["tidal"][:N_gas]  # d(g_i)/d(x_j)
 
 unit_velocity = snap("UnitVelocity_In_CGS") * u.cm / u.s
 phi_gizmo = (snap("Potential") * unit_velocity**2).to_value((u.km / u.s) ** 2)
@@ -654,39 +620,31 @@ plt.show()
 
 
     
-![png](README_files/README_36_0.png)
+![png](README_files/README_35_0.png)
     
 
 
-The eigenvalues of the tidal tensor say whether gravity squeezes (negative) or stretches
-(positive) the gas along each principal axis. The trace is $-4\pi G\rho \leq 0$, so at least one
-axis is always compressive. Around a compact mass like the star cluster, gas is stretched radially
-and squeezed in the other two directions; fully compressive tides take a dense, extended mass
-distribution.
+The tidal tensor measures how the gravitational field changes across a parcel of gas, and its
+Frobenius norm $\lVert T \rVert = \sqrt{\sum_{ij} T_{ij}^2}$ measures its strength independently of
+orientation. It has units of $\mathrm{time}^{-2}$, so $\lVert T \rVert^{-1/2}$ is the timescale on which tides act.
 
 
 ```python
-n_compressive = (np.linalg.eigvalsh(tidal) < 0).sum(axis=1)
-for n in (1, 2, 3):
-    print(f"{n} compressive axes: {mass[n_compressive == n].sum() / mass.sum():.1%} of the gas mass")
+tidal_norm = (np.linalg.norm(tidal, axis=(1, 2)) * (u.km / u.s / u.pc) ** 2).to_value(u.Myr**-2)
+# 1st-order in log, as for n_H
+tidal_slice = 10 ** M_full.Slice(np.log10(tidal_norm), order=1, **map_kwargs)
 
-n_slice = M_full.Slice(n_compressive.astype(float), order=0, **map_kwargs)
 fig, ax = plt.subplots(figsize=(6, 6))
-p = ax.pcolormesh(X, Y, n_slice, cmap=colors.ListedColormap(["C0", "C1", "C2"]), vmin=0.5, vmax=3.5)
+p = ax.pcolormesh(X, Y, tidal_slice, norm=colors.LogNorm(vmin=0.03, vmax=30), cmap="plasma")
 divider = make_axes_locatable(ax)
 cax = divider.append_axes("right", size="5%", pad=0.0)
-fig.colorbar(p, label="compressive axes", ticks=[1, 2, 3], cax=cax)
+fig.colorbar(p, label=r"$\|T\|$ $(\rm Myr^{-2})$", cax=cax)
 ax.set(xlabel="X (pc)", ylabel="Y (pc)", aspect="equal")
 plt.show()
 ```
 
-    1 compressive axes: 5.6% of the gas mass
-    2 compressive axes: 91.8% of the gas mass
-    3 compressive axes: 2.6% of the gas mass
-
-
 
     
-![png](README_files/README_38_1.png)
+![png](README_files/README_37_0.png)
     
 
