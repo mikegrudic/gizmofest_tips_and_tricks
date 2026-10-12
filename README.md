@@ -18,22 +18,46 @@ GIZMO outputs.
 
 
 ```python
+from glob import glob
 from matplotlib import pyplot as plt
 import matplotlib.colors as colors
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import numpy as np
 import warnings
 from astropy import units as u, constants as const
+from IPython.display import Image
 from meshoid import Meshoid, load_from_snapshot
 
 # the raytracer below cannot cache its compiled kernel, which is harmless here
 warnings.filterwarnings("ignore", message=".*Cannot cache compiled function.*")
 
 
-# coordinates for a square map, for pcolormesh
-def grid(halfwidth, res):
-    a = np.linspace(-halfwidth, halfwidth, res)
-    return np.meshgrid(a, a, indexing="ij")
+def show_maps(maps, halfwidth, label, titles=None, streamlines=None, **kwargs):
+    """Square maps centred on the origin, side by side. kwargs go to pcolormesh, and streamlines is
+    an optional pair of maps of a vector field's x and y components to draw on top."""
+    maps = [maps] if isinstance(maps, np.ndarray) else maps
+    a = np.linspace(-halfwidth, halfwidth, len(maps[0]))
+    X, Y = np.meshgrid(a, a, indexing="ij")
+    fig, axes = plt.subplots(1, len(maps), figsize=(5.5 * len(maps), 5), squeeze=False)
+    for ax, img, title in zip(axes[0], maps, titles or [None] * len(maps)):
+        p = ax.pcolormesh(X, Y, img, **kwargs)
+        if streamlines is not None:  # streamplot indexes arrays as [y, x]
+            ax.streamplot(a, a, streamlines[0].T, streamlines[1].T, color="w", linewidth=0.5, density=1.5)
+        cax = make_axes_locatable(ax).append_axes("right", size="5%", pad=0.0)
+        fig.colorbar(p, label=label, cax=cax)
+        ax.set(xlabel="X (pc)", ylabel="Y (pc)", aspect="equal", title=title)
+    fig.tight_layout()
+    plt.show()
+
+
+def show_pngs(folder):
+    pngs = sorted(glob(f"{folder}/*.png"))
+    fig, axes = plt.subplots(1, len(pngs), figsize=(5 * len(pngs), 5))
+    for ax, png in zip(axes, pngs):
+        ax.imshow(plt.imread(png))
+        ax.set_axis_off()
+    fig.tight_layout()
+    plt.show()
 
 
 %matplotlib inline
@@ -113,64 +137,22 @@ M = Meshoid(pos, mass, hsml)
 
 RMAX = 15.0
 RES = 800
-X, Y = grid(RMAX, RES)
-
 sigma_gas = M.SurfaceDensity(M.m, center=center, size=2 * RMAX, res=RES)
-
-fig, ax = plt.subplots(figsize=(6, 6))
-p = ax.pcolormesh(X, Y, sigma_gas, norm=colors.LogNorm(vmin=1, vmax=3e3))
-divider = make_axes_locatable(ax)
-cax = divider.append_axes("right", size="5%", pad=0.0)
-fig.colorbar(p, label=r"$\Sigma_{\rm gas}$ $(\rm M_\odot\,pc^{-2})$", pad=0, cax=cax)
-ax.set_aspect("equal")
-ax.set_xlabel("X (pc)")
-ax.set_ylabel("Y (pc)")
-plt.tight_layout(h_pad=1)
-plt.show()
 ```
-
-
-    
-![png](README_files/README_7_0.png)
-    
-
-
-The same deposition will run on an NVIDIA GPU with `backend="cuda"` (`pip install meshoid[cuda]`),
-where `dtype` picks the precision - `float32` is ~10x faster than `float64` on consumer cards,
-which run double precision at 1/64 rate, and both agree with the CPU result to summation-order
-roundoff. Every call has to convert and upload the particle arrays though, a fixed cost that does
-not care about resolution, so the GPU wins by more the bigger the map is and may not beat 32 CPU
-threads on a small one.
 
 
 ```python
-import time
-from meshoid.gpu_deposition import cuda_available
-
-
-def time_call(*args, **kwargs):
-    t0 = time.time()
-    result = M.SurfaceDensity(*args, **kwargs)
-    return result, time.time() - t0
-
-
-if cuda_available():
-    M.SurfaceDensity(M.m, center=center, size=2 * RMAX, res=64, backend="cuda")  # warm up JIT
-    for res in (RES, 2048):
-        kwargs = dict(center=center, size=2 * RMAX, res=res)
-        sigma_cpu, t_cpu = time_call(M.m, **kwargs)
-        print(f"res = {res}:  cpu {t_cpu:.2f}s", end="")
-        for dtype in (np.float64, np.float32):
-            sigma_gpu, dt = time_call(M.m, backend="cuda", dtype=dtype, **kwargs)
-            err = np.abs(sigma_gpu - sigma_cpu)[sigma_cpu > 0] / sigma_cpu[sigma_cpu > 0]
-            print(f" | {np.dtype(dtype).name} {dt:.2f}s ({t_cpu / dt:.1f}x, med. rel. diff {np.median(err):.0e})", end="")
-        print()
-else:
-    print("no CUDA device here - install meshoid[cuda] on a machine with an NVIDIA GPU")
+show_maps(sigma_gas, RMAX, r"$\Sigma_{\rm gas}$ $(\rm M_\odot\,pc^{-2})$", norm=colors.LogNorm(vmin=1, vmax=3e3))
 ```
 
-    no CUDA device here - install meshoid[cuda] on a machine with an NVIDIA GPU
 
+    
+![png](README_files/README_8_0.png)
+    
+
+
+`SurfaceDensity` can also run on an NVIDIA GPU: install with `pip install meshoid[cuda]` and pass
+`backend="cuda"`.
 
 ## Slices
 
@@ -192,36 +174,31 @@ print(f"{in_zoom.sum():,} cells in the central {L_ZOOM:.0f} pc")
 
 M = Meshoid(pos[in_zoom], mass[in_zoom], hsml[in_zoom])
 
-RES_ZOOM = 600
-X, Y = grid(L_ZOOM / 2, RES_ZOOM)
-slice_kwargs = dict(center=center, size=L_ZOOM, res=RES_ZOOM)
-
+slice_kwargs = dict(center=center, size=L_ZOOM, res=600)
 n_H_cgs = n_H[in_zoom].to_value(u.cm**-3)
 n_H_slice = M.Slice(n_H_cgs, order=0, **slice_kwargs)
 # order must be given explicitly: it defaults to 0, and at 0th order the log
 # round-trip is the identity, so both panels would be the same picture
 n_H_slice_log = 10 ** M.Slice(np.log10(n_H_cgs), order=1, **slice_kwargs)
-
-fig, ax = plt.subplots(1, 2, figsize=(9, 4.5), sharex=True, sharey=True)
-norm = colors.LogNorm(vmin=1e2, vmax=1e7)
-for a, img, title in zip(
-    ax, (n_H_slice, n_H_slice_log), (r"Nearest-neighbor $n_{\rm H}$", r"1st-order in $\log n_{\rm H}$")
-):
-    p = a.pcolormesh(X, Y, img, norm=norm)
-    a.set(xlabel="X (pc)", ylabel="Y (pc)", aspect="equal", title=title)
-    divider = make_axes_locatable(a)
-    cax = divider.append_axes("right", size="5%", pad=0.0)
-    fig.colorbar(p, label=r"$n_{\rm H}$ $(\rm cm^{-3})$", cax=cax)
-fig.tight_layout()
-plt.show()
 ```
 
     299,896 cells in the central 4 pc
 
 
 
+```python
+show_maps(
+    [n_H_slice, n_H_slice_log],
+    L_ZOOM / 2,
+    r"$n_{\rm H}$ $(\rm cm^{-3})$",
+    titles=[r"Nearest-neighbor $n_{\rm H}$", r"1st-order in $\log n_{\rm H}$"],
+    norm=colors.LogNorm(vmin=1e2, vmax=1e7),
+)
+```
+
+
     
-![png](README_files/README_11_1.png)
+![png](README_files/README_12_0.png)
     
 
 
@@ -262,7 +239,13 @@ emissivity = (n_e * n_p * alpha_halpha * E_halpha).to(u.erg / u.s / u.cm**3)
 j_halpha = (emissivity / rho).to(u.erg / u.s / u.Msun)
 kappa_dust = dust_abs_opacity(WAVELENGTH_HALPHA.to_value(u.micron)).to(u.pc**2 / u.Msun)
 print(f"L(H-alpha) = {(j_halpha * mass * u.Msun).sum().to(u.Lsun):.3g}, kappa = {kappa_dust:.2e}")
+```
 
+    L(H-alpha) = 3e+03 solLum, kappa = 1.38e-02 pc2 / solMass
+
+
+
+```python
 # j and kappa are shape (N, num_bands) - any number of bands can be solved at once
 intensity = radtransfer(
     j_halpha.value[:, None],
@@ -276,27 +259,24 @@ intensity = radtransfer(
 )
 # pc and Msun in, so erg/s/pc^2/sr out
 intensity = (intensity * u.erg / u.s / u.pc**2 / u.sr).to(u.erg / u.s / u.cm**2 / u.sr)
-
-X, Y = grid(RMAX, RES)
-fig, ax = plt.subplots(figsize=(6, 6))
-img = intensity[:, :, 0].value
-# let the ionized core saturate, which brings out the ionization fronts
-p = ax.pcolormesh(X, Y, img, norm=colors.LogNorm(vmin=img.max() / 1e4, vmax=img.max() / 10), cmap="magma")
-ax.set_aspect("equal")
-divider = make_axes_locatable(ax)
-cax = divider.append_axes("right", size="5%", pad=0.0)
-fig.colorbar(p, label=r"$I_{{\rm H}\alpha}$ $(\rm erg\,s^{-1}\,cm^{-2}\,sr^{-1})$", cax=cax)
-ax.set_xlabel("X (pc)")
-ax.set_ylabel("Y (pc)")
-plt.show()
 ```
 
-    L(H-alpha) = 3e+03 solLum, kappa = 1.38e-02 pc2 / solMass
 
+```python
+img = intensity[:, :, 0].value
+# let the ionized core saturate, which brings out the ionization fronts
+show_maps(
+    img,
+    RMAX,
+    r"$I_{{\rm H}\alpha}$ $(\rm erg\,s^{-1}\,cm^{-2}\,sr^{-1})$",
+    norm=colors.LogNorm(vmin=img.max() / 1e4, vmax=img.max() / 10),
+    cmap="magma",
+)
+```
 
 
     
-![png](README_files/README_13_1.png)
+![png](README_files/README_16_0.png)
     
 
 
@@ -394,18 +374,6 @@ J_slice = M.Slice(J, order=1, **slice_kwargs)
 J_slice_limited = M.Slice(J, order=1, slope_limiter=True, **slice_kwargs)
 for name, img in ("order=1", J_slice), ("slope_limiter=True", J_slice_limited):
     print(f"{name:>18}: {100 * np.mean(img < 0):.2f}% of pixels overshoot to negative |J|")
-
-X, Y = grid(L_ZOOM / 2, RES_ZOOM)
-fig, ax = plt.subplots(1, 2, figsize=(9, 4.5), sharex=True, sharey=True)
-norm = colors.LogNorm(vmin=1e-21, vmax=1e-16)
-for a, img, title in zip(ax, (J_slice, J_slice_limited), ("1st-order", "1st-order, slope-limited")):
-    p = a.pcolormesh(X, Y, np.abs(img), norm=norm, cmap="viridis")
-    a.set(xlabel="X (pc)", ylabel="Y (pc)", aspect="equal", title=title)
-    divider = make_axes_locatable(a)
-    cax = divider.append_axes("right", size="5%", pad=0.0)
-    fig.colorbar(p, label=r"$|J|$ $(\rm A\,m^{-2})$", cax=cax)
-fig.tight_layout()
-plt.show()
 ```
 
                order=1: 4.13% of pixels overshoot to negative |J|
@@ -413,8 +381,19 @@ plt.show()
 
 
 
+```python
+show_maps(
+    [np.abs(J_slice), np.abs(J_slice_limited)],
+    L_ZOOM / 2,
+    r"$|J|$ $(\rm A\,m^{-2})$",
+    titles=["1st-order", "1st-order, slope-limited"],
+    norm=colors.LogNorm(vmin=1e-21, vmax=1e-16),
+)
+```
+
+
     
-![png](README_files/README_19_1.png)
+![png](README_files/README_23_0.png)
     
 
 
@@ -442,9 +421,11 @@ z-axis - saves it and exits. It still opens a window for a moment.
 
 
 ```python
-from IPython.display import Image
-
 !vizmo {SNAPFILE} --width 600 --height 600 --screenshot vizmo.png
+```
+
+
+```python
 Image("vizmo.png", width=600)
 ```
 
@@ -452,7 +433,7 @@ Image("vizmo.png", width=600)
 
 
     
-![png](README_files/README_22_0.png)
+![png](README_files/README_27_0.png)
     
 
 
@@ -474,21 +455,7 @@ composite with [SII], $\mathrm{H}\alpha$ and [OIII] emission as RGB. `SinkVis2 -
 
 
 ```python
-from glob import glob
-
-
-def show_pngs(folder):
-    pngs = sorted(glob(f"{folder}/*.png"))
-    fig, ax = plt.subplots(1, len(pngs), figsize=(5 * len(pngs), 5))
-    for a, png in zip(ax, pngs):
-        a.imshow(plt.imread(png))
-        a.set_axis_off()
-    plt.tight_layout()
-    plt.show()
-
-
 !SinkVis2 {SNAPFILE} SigmaGas CoolMap HubbleSHO --rmax={RMAX} --outputfolder=sinkvis2/builtin
-show_pngs("sinkvis2/builtin")
 ```
 
     ['snapshot_2590.hdf5']
@@ -501,8 +468,13 @@ show_pngs("sinkvis2/builtin")
 
 
 
+```python
+show_pngs("sinkvis2/builtin")
+```
+
+
     
-![png](README_files/README_26_1.png)
+![png](README_files/README_32_0.png)
     
 
 
@@ -517,7 +489,6 @@ slices the line-of-sight velocity in km/s.
 ```python
 !SinkVis2 {SNAPFILE} 'Slice(Temperature)' 'SurfaceDensity(Masses*InternalEnergy)' --rmax={RMAX} --cmap=inferno --outputfolder=sinkvis2/custom
 !SinkVis2 {SNAPFILE} 'Slice(Velocities[:,2]*UnitVelocity_In_CGS/1e5)' --rmax={RMAX} --cmap=RdBu_r --limits=-10,10 --outputfolder=sinkvis2/custom
-show_pngs("sinkvis2/custom")
 ```
 
     ['snapshot_2590.hdf5']
@@ -532,8 +503,13 @@ show_pngs("sinkvis2/custom")
 
 
 
+```python
+show_pngs("sinkvis2/custom")
+```
+
+
     
-![png](README_files/README_28_1.png)
+![png](README_files/README_35_0.png)
     
 
 
@@ -549,8 +525,7 @@ numba compiles the tree code.
 
 
 ```python
-# --force-reinstall because GitHub master has the same version number as the PyPI release
-%pip install -q --force-reinstall --no-deps "git+https://github.com/mikegrudic/pytreegrav.git"
+%pip install -q "git+https://github.com/mikegrudic/pytreegrav.git"
 ```
 
 
@@ -566,20 +541,28 @@ pos_all = np.concatenate([pos, pos_sink])
 mass_all = np.concatenate([mass, mass_sink])
 hsml_all = np.concatenate([hsml, np.full(len(mass_sink), hsml_sink)])
 G = const.G.to_value(u.pc * (u.km / u.s) ** 2 / u.Msun)  # potentials in (km/s)^2
+```
 
+    526 sinks totalling 814 Msun
+
+
+
+```python
 fields = Field(pos_all, mass_all, hsml_all, G=G, parallel=True).evaluate(potential=True, accel=True, tidal=True)
 # evaluated at every particle, so keep the gas cells, which come first
 N_gas = len(mass)
 phi = fields["potential"][:N_gas]
 g = fields["accel"][:N_gas]  # -grad(phi)
 tidal = fields["tidal"][:N_gas]  # d(g_i)/d(x_j)
+```
 
+
+```python
 unit_velocity = snap("UnitVelocity_In_CGS") * u.cm / u.s
 phi_gizmo = (snap("Potential") * unit_velocity**2).to_value((u.km / u.s) ** 2)
 print(f"median |phi / phi_GIZMO - 1| = {np.median(np.abs(phi / phi_gizmo - 1)):.1e}")
 ```
 
-    526 sinks totalling 814 Msun
     median |phi / phi_GIZMO - 1| = 8.8e-04
 
 
@@ -605,22 +588,16 @@ M_full = Meshoid(pos, mass, hsml)
 map_kwargs = dict(center=center, size=2 * RMAX, res=RES)
 phi_slice = M_full.Slice(phi, order=1, **map_kwargs)
 g_slice = [M_full.Slice(g[:, i], order=1, **map_kwargs) for i in (0, 1)]
+```
 
-X, Y = grid(RMAX, RES)
-fig, ax = plt.subplots(figsize=(6, 6))
-p = ax.pcolormesh(X, Y, phi_slice, cmap="cividis")
-# streamplot indexes arrays as [y, x], so transpose ours
-ax.streamplot(X[:, 0], Y[0], g_slice[0].T, g_slice[1].T, color="w", linewidth=0.5, density=1.5)
-divider = make_axes_locatable(ax)
-cax = divider.append_axes("right", size="5%", pad=0.0)
-fig.colorbar(p, label=r"$\Phi$ $(\rm km^2\,s^{-2})$", cax=cax)
-ax.set(xlabel="X (pc)", ylabel="Y (pc)", aspect="equal")
-plt.show()
+
+```python
+show_maps(phi_slice, RMAX, r"$\Phi$ $(\rm km^2\,s^{-2})$", cmap="cividis", streamlines=g_slice)
 ```
 
 
     
-![png](README_files/README_35_0.png)
+![png](README_files/README_45_0.png)
     
 
 
@@ -633,18 +610,15 @@ orientation. It has units of $\mathrm{time}^{-2}$, so $\lVert T \rVert^{-1/2}$ i
 tidal_norm = (np.linalg.norm(tidal, axis=(1, 2)) * (u.km / u.s / u.pc) ** 2).to_value(u.Myr**-2)
 # 1st-order in log, as for n_H
 tidal_slice = 10 ** M_full.Slice(np.log10(tidal_norm), order=1, **map_kwargs)
+```
 
-fig, ax = plt.subplots(figsize=(6, 6))
-p = ax.pcolormesh(X, Y, tidal_slice, norm=colors.LogNorm(vmin=0.03, vmax=30), cmap="plasma")
-divider = make_axes_locatable(ax)
-cax = divider.append_axes("right", size="5%", pad=0.0)
-fig.colorbar(p, label=r"$\|T\|$ $(\rm Myr^{-2})$", cax=cax)
-ax.set(xlabel="X (pc)", ylabel="Y (pc)", aspect="equal")
-plt.show()
+
+```python
+show_maps(tidal_slice, RMAX, r"$\|T\|$ $(\rm Myr^{-2})$", norm=colors.LogNorm(vmin=0.03, vmax=30), cmap="plasma")
 ```
 
 
     
-![png](README_files/README_37_0.png)
+![png](README_files/README_48_0.png)
     
 
