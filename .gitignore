@@ -1,0 +1,4 @@
+snapshot_*.hdf5
+sinkvis2/
+vizmo.png
+.ipynb_checkpoints/
