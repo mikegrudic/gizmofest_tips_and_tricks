@@ -515,17 +515,17 @@ show_pngs("sinkvis2/custom")
 
 ## Gravity with pytreegrav
 
-[pytreegrav](https://github.com/mikegrudic/pytreegrav) computes gravitational potentials, fields
-and tidal tensors with an octree, and its `Field` class gets all three in a single tree walk.
-We'll evaluate them at the gas cells, sourced by the gas and the sink particles. `Field` is newer
-than the latest PyPI release, so install from GitHub. Softening lengths are kernel support radii, so the gas uses its smoothing lengths
-and the sinks use the fixed softening GIZMO gave them. GIZMO also saved the potential it computed
-in the snapshot, which makes a good cross-check. The first call takes a few extra seconds while
-numba compiles the tree code.
+[pytreegrav](https://github.com/mikegrudic/pytreegrav) computes gravitational potentials, fields and
+tidal tensors with an octree, and its `Field` class gets all three in a single tree walk. We'll
+evaluate them at the gas cells, sourced by the gas and the sink particles. `Field` is new in
+pytreegrav 1.5.0, so upgrade if you have an older version. Softening lengths are kernel support
+radii, so the gas uses its smoothing lengths and the sinks use the fixed softening GIZMO gave them.
+GIZMO also saved the potential it computed in the snapshot, which makes a good cross-check. The
+first call takes a few extra seconds while numba compiles the tree code.
 
 
 ```python
-%pip install -q "git+https://github.com/mikegrudic/pytreegrav.git"
+%pip install -q -U pytreegrav
 ```
 
 
